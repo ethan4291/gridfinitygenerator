@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Gridfinity Generator</title>
+    <style>
+      body { font-family: system-ui, -apple-system, Arial, sans-serif; margin: 24px; }
+      label { display:block; margin-top:8px }
+      input[type=number] { width:120px }
+      .preview { border:1px solid #ddd; display:inline-block; margin-top:12px }
+      .controls { max-width:640px }
+      .actions { margin-top:12px }
+    </style>
+  </head>
+  <body>
+    <h1>Gridfinity Generator</h1>
+    <div class="controls">
+      <form id="form">
+        <label>Columns: <input name="cols" type="number" min="1" value="{{ params.cols }}" /></label>
+        <label>Rows: <input name="rows" type="number" min="1" value="{{ params.rows }}" /></label>
+        <label>Cell size (mm): <input name="cell" type="number" step="0.1" value="{{ params.cell }}" /></label>
+        <label>Wall thickness (mm): <input name="wall" type="number" step="0.1" value="{{ params.wall }}" /></label>
+        <label>Height (mm): <input name="height" type="number" step="0.1" value="{{ params.height }}" /></label>
+        <label><input type="checkbox" id="grid-enable" checked /> Add bottom grid (rib lattice)</label>
+        <label>Grid pitch (mm): <input id="gridPitch" type="number" step="0.1" value="6.0" /></label>
+        <label>Grid rib thickness (mm): <input id="gridThickness" type="number" step="0.1" value="1.5" /></label>
+        <label>Grid rib height (mm): <input id="gridHeight" type="number" step="0.1" value="2.5" /></label>
+        <hr />
+        <label><input type="checkbox" id="posts-enable" /> Add alignment posts in each cell</label>
+        <label>Post diameter (mm): <input id="postDiameter" type="number" step="0.1" value="6.0" /></label>
+        <label>Post height (mm): <input id="postHeight" type="number" step="0.1" value="4.0" /></label>
+        <label>Post clearance (mm): <input id="postClearance" type="number" step="0.01" value="0.2" /></label>
+        <div class="actions">
+          <button type="button" id="update">Update preview</button>
+          <button type="button" id="download-scad">Download SCAD</button>
+        </div>
+      </form>
+    </div>
+
+    <div style="display:flex;gap:16px;align-items:flex-start;">
+      <div class="preview" id="preview-wrapper">
+        <img id="preview" src="/preview.svg?cols={{ params.cols }}&rows={{ params.rows }}&cell={{ params.cell }}&wall={{ params.wall }}" alt="preview" />
+      </div>
+    </div>
+
+    <script>
+      const form = document.getElementById('form');
+      const preview = document.getElementById('preview');
+      const updateBtn = document.getElementById('update');
+      const downloadBtn = document.getElementById('download-scad');
+
+      function getParams() {
+        const fd = new FormData(form);
+        const params = new URLSearchParams();
+        for (const [k,v] of fd.entries()) params.append(k, v);
+        // grid and posts
+        params.append('grid', document.getElementById('grid-enable').checked ? '1' : '0');
+        params.append('grid_pitch', document.getElementById('gridPitch').value);
+        params.append('grid_thick', document.getElementById('gridThickness').value);
+        params.append('grid_h', document.getElementById('gridHeight').value);
+        params.append('posts', document.getElementById('posts-enable').checked ? '1' : '0');
+        params.append('post_d', document.getElementById('postDiameter').value);
+        params.append('post_h', document.getElementById('postHeight').value);
+        params.append('post_clear', document.getElementById('postClearance').value);
+        return params.toString();
+      }
+
+      updateBtn.addEventListener('click', ()=>{
+        preview.src = '/preview.svg?' + getParams() + '&_=' + Date.now();
+      });
+
+      downloadBtn.addEventListener('click', ()=>{
+        const url = '/download/scad?' + getParams();
+        window.location = url;
+      });
+
+  // wire download STL button (server-side OpenSCAD required)
+  const downloadStl = document.createElement('button');
+  downloadStl.type = 'button';
+  downloadStl.id = 'download-stl';
+  downloadStl.textContent = 'Download STL';
+  document.querySelector('.actions').appendChild(downloadStl);
+  downloadStl.addEventListener('click', ()=>{ window.location = '/download/stl?' + getParams(); });
+
+  // apply preset button to quickly set Gridfinity defaults
+  const applyPreset = document.createElement('button');
+  applyPreset.type = 'button';
+  applyPreset.id = 'apply-gridfinity';
+  applyPreset.textContent = 'Apply Gridfinity preset';
+  document.querySelector('.actions').appendChild(applyPreset);
+  applyPreset.addEventListener('click', ()=>{
+    document.querySelector('input[name="cell"]').value = '51.0';
+    document.querySelector('input[name="wall"]').value = '3.0';
+    document.querySelector('input[name="height"]').value = '12.0';
+    document.getElementById('grid-enable').checked = true;
+    document.getElementById('gridPitch').value = '6.0';
+    document.getElementById('gridThickness').value = '1.5';
+    document.getElementById('gridHeight').value = '2.5';
+    document.getElementById('posts-enable').checked = true;
+    document.getElementById('postDiameter').value = '6.0';
+    document.getElementById('postHeight').value = '4.0';
+    document.getElementById('postClearance').value = '0.2';
+    preview.src = '/preview.svg?' + getParams() + '&_=' + Date.now();
+  });
+    </script>
+  </body>
+  <!-- Caught you! -->
+</html>

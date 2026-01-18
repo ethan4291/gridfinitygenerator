@@ -1,0 +1,323 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Gridfinity Generator (Static)</title>
+    <style>
+      body { font-family: system-ui, -apple-system, Arial, sans-serif; margin: 24px; }
+      label { display:block; margin-top:8px }
+      input[type=number] { width:120px }
+      .preview { border:1px solid #ddd; display:inline-block; margin-top:12px }
+      .controls { max-width:640px }
+      .actions { margin-top:12px }
+      pre.instructions { background:#f8f8f8; padding:12px; border-radius:6px }
+    </style>
+  </head>
+  <body>
+    <h1>Gridfinity Generator</h1>
+
+    <div class="controls">
+      <form id="form">
+        <label>Columns: <input name="cols" id="cols" type="number" min="1" value="3" /></label>
+        <label>Rows: <input name="rows" id="rows" type="number" min="1" value="2" /></label>
+        <label>Cell size (mm): <input name="cell" id="cell" type="number" step="0.1" value="51.0" /></label>
+        <label>Wall thickness (mm): <input name="wall" id="wall" type="number" step="0.1" value="3.0" /></label>
+  <label>Height (mm): <input name="height" id="height" type="number" step="0.1" value="12.0" /></label>
+  <label><input type="checkbox" id="grid-enable" checked /> Add bottom grid (rib lattice)</label>
+  <label>Grid pitch (mm): <input name="gridPitch" id="gridPitch" type="number" step="0.1" value="6.0" /></label>
+  <label>Grid rib thickness (mm): <input name="gridThickness" id="gridThickness" type="number" step="0.1" value="1.5" /></label>
+  <label>Grid rib height (mm): <input name="gridHeight" id="gridHeight" type="number" step="0.1" value="2.5" /></label>
+  <hr />
+  <label><input type="checkbox" id="posts-enable" /> Add alignment posts in each cell</label>
+  <label>Post diameter (mm): <input name="postDiameter" id="postDiameter" type="number" step="0.1" value="6.0" /></label>
+  <label>Post height (mm): <input name="postHeight" id="postHeight" type="number" step="0.1" value="4.0" /></label>
+  <label>Post clearance (mm): <input name="postClearance" id="postClearance" type="number" step="0.01" value="0.2" /></label>
+  <div style="margin-top:8px"><button type="button" id="apply-gridfinity">Apply Gridfinity preset</button></div>
+        <div class="actions">
+          <button type="button" id="update">Update preview</button>
+          <button type="button" id="download-scad">Download SCAD</button>
+          <button type="button" id="download-stl">Download STL (instructions)</button>
+        </div>
+      </form>
+    </div>
+
+    <div style="display:flex;gap:16px;align-items:flex-start;">
+      <div class="preview" id="preview-wrapper" aria-hidden="false" style="padding:8px; background:#fff">
+        <!-- SVG preview will be inserted here -->
+      </div>
+    </div>
+
+    <script>
+  function generateScad(cols, rows, cell, height, wall, clearance = 0.2, grid, posts) {
+        const total_x = cols * cell;
+        const total_y = rows * cell;
+        const pocket_w = cell - wall - clearance;
+        const pocket_h = cell - wall - clearance;
+        const lines = [];
+        lines.push('// Generated Gridfinity SCAD');
+        lines.push(`cell = ${cell};`);
+        lines.push(`cols = ${cols};`);
+        lines.push(`rows = ${rows};`);
+        lines.push(`height = ${height};`);
+        lines.push(`wall = ${wall};`);
+        lines.push(`clearance = ${clearance};`);
+        lines.push('module pocket() {');
+        lines.push('  translate([wall/2 + clearance/2, wall/2 + clearance/2, 0])');
+        lines.push(`    cube([${pocket_w}, ${pocket_h}, height], center=false);`);
+        lines.push('}');
+        lines.push('// outer tray');
+        lines.push('module tray() {');
+        lines.push('  difference() {');
+        lines.push(`    cube([${total_x}, ${total_y}, height + wall], center=false);`);
+        lines.push(`    for (x = [0:${cols-1}]) for (y = [0:${rows-1}])`);
+        lines.push('      translate([x*cell, y*cell, 0]) pocket();');
+        lines.push('  }');
+        lines.push('}');
+  // optional floor grid (rib lattice)
+        if (grid && grid.enable) {
+          const pitch = grid.pitch;
+          const rib = grid.thickness;
+          const ribh = grid.height;
+          lines.push('module floor_grid() {');
+          lines.push('  union() {');
+          // vertical ribs (along Y)
+          lines.push(`    for (x = [${rib/2}:${pitch}:${(cols*cell - rib/2)}]) translate([x, 0, ${wall}]) cube([${rib}, ${rows*cell}, ${ribh}], center=false);`);
+          // horizontal ribs (along X)
+          lines.push(`    for (y = [${rib/2}:${pitch}:${(rows*cell - rib/2)}]) translate([0, y, ${wall}]) cube([${cols*cell}, ${rib}, ${ribh}], center=false);`);
+          lines.push('  }');
+          lines.push('}');
+          lines.push('floor_grid();');
+        }
+
+        // optional posts (alignment pegs)
+        if (posts && posts.enable) {
+          lines.push('module posts() {');
+          lines.push('  union() {');
+          for (let x = 0; x < cols; x++) {
+            for (let y = 0; y < rows; y++) {
+              const cx = x*cell + cell/2;
+              const cy = y*cell + cell/2;
+              lines.push(`    translate([${cx}, ${cy}, ${wall}]) cylinder(h=${posts.height}, r=${posts.diameter/2}, $fn=32);`);
+            }
+          }
+          lines.push('  }');
+          lines.push('}');
+          lines.push('posts();');
+        }
+
+        lines.push('tray();');
+        return lines.join('\n');
+      }
+
+      function generateSvg(cols, rows, cell, wall) {
+        const width = cols * cell;
+        const height = rows * cell;
+        const inset = wall / 2;
+        const pocket_w = cell - wall;
+        const pocket_h = cell - wall;
+        const parts = [];
+        parts.push(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}px" height="${height}px">`);
+        parts.push('<style>rect{fill:#f5f5f5;stroke:#333;stroke-width:0.5}</style>');
+        parts.push(`<rect x="0" y="0" width="${width}" height="${height}" fill="none" stroke="#000" stroke-width="1"/>`);
+        for (let x = 0; x < cols; x++) {
+          for (let y = 0; y < rows; y++) {
+            const px = x * cell + inset;
+            const py = y * cell + inset;
+            parts.push(`<rect x="${px}" y="${py}" width="${pocket_w}" height="${pocket_h}" />`);
+          }
+        }
+        parts.push('</svg>');
+        return parts.join('\n');
+      }
+
+        // Build a simple ASCII STL by composing boxes (base + grid walls). This produces a printable tray
+        // without requiring OpenSCAD. It's an approximation but works well for common sizes.
+  function generateStl(cols, rows, cell, height, wall, grid, posts) {
+          const total_x = cols * cell;
+          const total_y = rows * cell;
+          const base_thickness = wall; // mm
+          const wall_height = height; // mm above the base
+          const triangles = [];
+
+          function addTri(a, b, c) { triangles.push([a, b, c]); }
+
+          function addBox(x, y, z, w, d, h) {
+            const v = [
+              [x, y, z],
+              [x + w, y, z],
+              [x + w, y + d, z],
+              [x, y + d, z],
+              [x, y, z + h],
+              [x + w, y, z + h],
+              [x + w, y + d, z + h],
+              [x, y + d, z + h]
+            ];
+            const faces = [
+              [0,1,2,3], // bottom
+              [4,5,6,7], // top
+              [0,1,5,4], // front
+              [1,2,6,5], // right
+              [2,3,7,6], // back
+              [3,0,4,7]  // left
+            ];
+            for (const f of faces) {
+              const [a,b,c,d] = f.map(i => v[i]);
+              // two triangles (a,b,c) and (a,c,d)
+              addTri(a, b, c);
+              addTri(a, c, d);
+            }
+          }
+
+          // base plate
+          addBox(0, 0, 0, total_x, total_y, base_thickness);
+
+          // bottom grid ribs (if enabled)
+    if (grid && grid.enable) {
+            const pitch = grid.pitch;
+            const rib = grid.thickness;
+            const ribh = grid.height;
+            // vertical ribs along X at intervals
+            for (let x = rib/2; x <= total_x - rib/2 + 1e-6; x += pitch) {
+              addBox(x - rib/2, 0, base_thickness, rib, total_y, ribh);
+            }
+            // horizontal ribs along Y
+            for (let y = rib/2; y <= total_y - rib/2 + 1e-6; y += pitch) {
+              addBox(0, y - rib/2, base_thickness, total_x, rib, ribh);
+            }
+          }
+
+          // vertical walls along X (columns separators) including outer rims
+          for (let i = 0; i <= cols; i++) {
+            const cx = i * cell - wall / 2;
+            addBox(cx, 0, base_thickness, wall, total_y, wall_height);
+          }
+
+          // horizontal walls along Y (row separators)
+          for (let j = 0; j <= rows; j++) {
+            const cy = j * cell - wall / 2;
+            addBox(0, cy, base_thickness, total_x, wall, wall_height);
+          }
+
+          // add posts as square posts (approximate cylinders)
+          if (posts && posts.enable) {
+            const pd = posts.diameter;
+            const ph = posts.height;
+            for (let x = 0; x < cols; x++) {
+              for (let y = 0; y < rows; y++) {
+                const cx = x*cell + cell/2 - pd/2;
+                const cy = y*cell + cell/2 - pd/2;
+                addBox(cx, cy, base_thickness, pd, pd, ph);
+              }
+            }
+          }
+
+          // Build ASCII STL
+          function normal(a, b, c) {
+            const ux = b[0]-a[0], uy = b[1]-a[1], uz = b[2]-a[2];
+            const vx = c[0]-a[0], vy = c[1]-a[1], vz = c[2]-a[2];
+            const nx = uy*vz - uz*vy;
+            const ny = uz*vx - ux*vz;
+            const nz = ux*vy - uy*vx;
+            const len = Math.sqrt(nx*nx + ny*ny + nz*nz) || 1;
+            return [nx/len, ny/len, nz/len];
+          }
+
+          let out = '';
+          out += 'solid gridfinity\n';
+          for (const tri of triangles) {
+            const n = normal(tri[0], tri[1], tri[2]);
+            out += `  facet normal ${n[0]} ${n[1]} ${n[2]}\n`;
+            out += '    outer loop\n';
+            for (const v of tri) out += `      vertex ${v[0]} ${v[1]} ${v[2]}\n`;
+            out += '    endloop\n';
+            out += '  endfacet\n';
+          }
+          out += 'endsolid gridfinity\n';
+          return out;
+        }
+        
+
+      function downloadFile(filename, content, mime) {
+        const blob = new Blob([content], { type: mime || 'application/octet-stream' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+      }
+
+      function readForm() {
+        const cols = Math.max(1, parseInt(document.getElementById('cols').value) || 1);
+        const rows = Math.max(1, parseInt(document.getElementById('rows').value) || 1);
+        const cell = parseFloat(document.getElementById('cell').value) || 51.0;
+        const wall = parseFloat(document.getElementById('wall').value) || 3.0;
+        const height = parseFloat(document.getElementById('height').value) || 12.0;
+  const gridEnable = !!document.getElementById('grid-enable').checked;
+        const gridPitch = parseFloat(document.getElementById('gridPitch').value) || 6.0;
+        const gridThickness = parseFloat(document.getElementById('gridThickness').value) || 1.5;
+        const gridHeight = parseFloat(document.getElementById('gridHeight').value) || 2.5;
+  const postsEnable = !!document.getElementById('posts-enable').checked;
+  const postDiameter = parseFloat(document.getElementById('postDiameter').value) || 6.0;
+  const postHeight = parseFloat(document.getElementById('postHeight').value) || 4.0;
+  const postClearance = parseFloat(document.getElementById('postClearance').value) || 0.2;
+        return { cols, rows, cell, wall, height,
+          grid: { enable: gridEnable, pitch: gridPitch, thickness: gridThickness, height: gridHeight },
+          posts: { enable: postsEnable, diameter: postDiameter, height: postHeight, clearance: postClearance }
+        };
+      }
+
+      function updatePreview() {
+        const params = readForm();
+        const svg = generateSvg(params.cols, params.rows, params.cell, params.wall);
+        const wrapper = document.getElementById('preview-wrapper');
+        // embed the SVG directly so it scales crisply
+        wrapper.innerHTML = svg;
+      }
+
+      document.getElementById('update').addEventListener('click', () => { updatePreview(); });
+
+    document.getElementById('download-scad').addEventListener('click', () => {
+  const p = readForm();
+  const scad = generateScad(p.cols, p.rows, p.cell, p.height, p.wall, 0.2, p.grid, p.posts);
+        const filename = `gridfinity_${p.cols}x${p.rows}_${Math.round(p.cell)}mm.scad`;
+        downloadFile(filename, scad, 'text/plain;charset=utf-8');
+      });
+      
+      document.getElementById('apply-gridfinity').addEventListener('click', () => {
+        // sensible defaults approximating Gridfinity (51mm cell variant)
+        document.getElementById('cell').value = '51.0';
+        document.getElementById('wall').value = '3.0';
+        document.getElementById('height').value = '12.0';
+        document.getElementById('grid-enable').checked = true;
+        document.getElementById('gridPitch').value = '6.0';
+        document.getElementById('gridThickness').value = '1.5';
+        document.getElementById('gridHeight').value = '2.5';
+        document.getElementById('posts-enable').checked = true;
+        document.getElementById('postDiameter').value = '6.0';
+        document.getElementById('postHeight').value = '4.0';
+        document.getElementById('postClearance').value = '0.2';
+        updatePreview();
+      });
+
+      document.getElementById('download-stl').addEventListener('click', () => {
+        try {
+          const p = readForm();
+          const stl = generateStl(p.cols, p.rows, p.cell, p.height, p.wall, p.grid, p.posts);
+          const filename = `gridfinity_${p.cols}x${p.rows}_${Math.round(p.cell)}mm.stl`;
+          downloadFile(filename, stl, 'application/vnd.ms-pki.stl');
+        } catch (e) {
+          alert('STL generation failed: ' + (e && e.message ? e.message : e));
+        }
+      });
+
+      // initial render
+      updatePreview();
+    </script>
+  </body>
+</html>
+
+<!-- Caught you! -->
